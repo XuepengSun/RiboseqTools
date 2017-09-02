@@ -1,2 +1,2 @@
-# Riboseq_tools
-Tools for ribosome profiling
+# RiboseqTools
+Tools for ribosome profiling data analysis and plot
