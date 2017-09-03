@@ -16,7 +16,7 @@ Global parameters:
 	-prefix   prefix of output, default: riboseq.
 	-threads  threads number, default: 10.
 	
-** map **
+** map **\n
 This command creates a modified cds or intron-free genome for reads mapping, 
 but only cds sequences are used for downstream analyses.
 
