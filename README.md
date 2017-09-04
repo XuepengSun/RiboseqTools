@@ -24,9 +24,13 @@
    * gridExtra
  
  ### **Useage:**
-    **perl Riboseq_tools.pl  [task]  [options]**
+     perl Riboseq_tools.pl  [task]  [options]
 
-**Task:  map   meta   plot   diff**
+### Task: 
+ * **map**
+ * **meta**
+ * **plot**
+ * **diff**
 
 #### **options:**
 
