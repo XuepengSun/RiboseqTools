@@ -3,7 +3,7 @@
  
  ### **Prerequisite**
  
- ..* bowti2 (http://bowtie-bio.sourceforge.net/bowtie2/index.shtml)
+ * bowti2 (http://bowtie-bio.sourceforge.net/bowtie2/index.shtml)
  
  ..* sambamba (http://lomereiter.github.io/sambamba/)
  
