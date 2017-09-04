@@ -10,6 +10,13 @@
  * perl modules
  
    * BioPerl
+   * Getopt::Long
+   * Statistics::Basic
+   * Statistics::R
+   * Term::ANSIColor
+   * Bio::Tools::CodonTable
+   
+   
 
 **Useage:**
 
