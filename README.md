@@ -1,5 +1,5 @@
 # RiboseqTools
-Tools for ribosome profiling data analysis and plot
+Header one Tools for ribosome profiling data analysis and plot.
 
 Useage:
 	perl Riboseq_tools.pl [task] [options]
