@@ -1,7 +1,9 @@
 #!/usr/bin/perl -w
 use Bio::SeqIO;
 use Getopt::Long;
-use SXP::Util qw(LOG);
+use lib 'lib';
+use log qw(LOG);
+#use SXP::Util qw(LOG);
 use List::Util qw(max min sum);
 use Statistics::Basic qw(:all);
 use Bio::Tools::CodonTable;
@@ -12,13 +14,16 @@ use Cwd;
 use File::chdir;
 use File::Spec;
 
+
 ######################################################
 #	contact: Xuepeng Sun (xs57@cornell.edu)	     #		
 #	date:	         08/28/2017                  #       
 ######################################################
 
 my ($genome,$gff,$cds,$prefix,$type,$ext_len,$mapping_qual,$mismatch,$seedLen,$read,$threads,$bam,$cdsFile,$readLenRange,$program,$codonRange,$outputDir,$minCount);
-$program = {'map'=>1,'meta'=>1,'plot'=>1};
+my ($strand,$engine,$bamRFCnt,$bamRFTrt,$bamRSCnt,$bamRSTrt,$src,$disp,$rdmin,$padj,$plot,$minP,$rfLen,$rsLen,$tool);
+
+$program = {'map'=>1,'meta'=>1,'plot'=>1,'diff'=>1};
 
 GetOptions(
 	'genome=s'    => \$genome,
@@ -35,8 +40,23 @@ GetOptions(
 	'cds=s'       => \$cdsFile,
 	'rdRange=s'   => \$readLenRange,
 	'cdRange=s'   => \$codonRange,
-	'-dir=s'      => \$outputDir,
-	'minCount=i'  => \$minCount
+	'dir=s'       => \$outputDir,
+	'minCount=i'  => \$minCount,
+	'strand=i'	  => \$strand,
+	'engine=s'	  => \$engine,
+	'bamRFCnt=s'  => \$bamRFCnt,
+	'bamRFTrt=s'  => \$bamRFTrt,
+	'bamRSCnt=s'  => \$bamRSCnt,
+	'bamRSTrt=s'  => \$bamRSTrt,
+	'src=s'		  => \$src,
+	'disp=i'	  => \$disp,
+	'rdmin=i'     => \$rdmin,
+	'padj=s'      => \$padj,
+	'plot=i'      => \$plot,
+	'minP=f'	  => \$minP,
+	'rfLen=s'     => \$rfLen,
+	'rsLen=s'	  => \$rsLen,
+	'tool=s'	  => \$tool
 );
 
 unless(scalar @ARGV == 1 && $program->{$ARGV[0]}){ERROR_INFOR("Check the \"task\" command!")}
@@ -232,6 +252,180 @@ elsif($task eq 'plot'){
 	}
 }
 
+elsif($task eq 'diff'){
+	unless($bamRFCnt && $bamRFTrt && $bamRSCnt && $bamRSTrt && $cdsFile){ERROR_INFOR("Check the imput bam files!")}
+	$strand //= 2;
+	$rdmin //= 10;
+	$rfLen //= '27-30';
+	$rsLen //= '27-30';
+	$engine //= 'ribodiff';
+	
+	my @bamsRFCnt = split(/,/,$bamRFCnt);
+	my @bamsRFTrt = split(/,/,$bamRFTrt);
+	my @bamsRSCnt = split(/,/,$bamRSCnt);
+	my @bamsRSTrt = split(/,/,$bamRSTrt);
+	
+	my @rfLens = split(/-/,$rfLen);
+	my @rsLens = split(/-/,$rsLen);
+	
+	$cdsFile = File::Spec->rel2abs($cdsFile);
+	@bamsRFCnt = map{File::Spec->rel2abs($_)} @bamsRFCnt;
+	@bamsRFTrt = map{File::Spec->rel2abs($_)} @bamsRFTrt;
+	@bamsRSCnt = map{File::Spec->rel2abs($_)} @bamsRSCnt;
+	@bamsRSTrt = map{File::Spec->rel2abs($_)} @bamsRSTrt;
+		
+	my $valDir = $outWD.'/diff';
+	unless(-d $valDir){mkdir $valDir}
+	chdir $valDir;
+
+	my (%stranBias, %countRF, %countRS, %countPos);
+	
+	LOG("Reading $cdsFile");
+	open CDS,$cdsFile || die "$!";
+	while(<CDS>){
+		if(my ($gid,$gleft,$glen)=$_=~/^>(\S+).*left=(\d+).*cds_len=(\d+)/){
+			$countPos{$gid} = {'min'=>$gleft + 1, 'max'=>$gleft + $glen};
+		}
+	}
+	close CDS;
+	
+	my (@allRF,@allRS);
+	push (@allRF,@bamsRFCnt);
+	push (@allRF,@bamsRFTrt);
+	push (@allRS,@bamsRSCnt);
+	push (@allRS,@bamsRSTrt);
+	
+	foreach(@allRF){
+		my $bam_prefix = fileparse($_,".bam");
+		LOG("Counting $bam_prefix");
+		open BAM,"sambamba view $_ |";
+		while(<BAM>){
+			my @s = split;
+			next if (length($s[9]) > $rfLens[1] || length($s[9]) < $rfLens[0]);
+			if($s[3] + length($s[9]) -1 >= $countPos{$s[2]}->{'min'} && $s[3] <= $countPos{$s[2]}->{'max'}){
+				$countRF{$bam_prefix}{$s[2]}{$s[1]}++;
+			}
+		}
+		close BAM;
+	}
+	
+	foreach(@allRS){
+		my $bam_prefix = fileparse($_,".bam");
+		LOG("Counting $bam_prefix");
+		open BAM,"sambamba view $_ |";
+		while(<BAM>){
+			my @s = split;
+			next if (length($s[9]) > $rsLens[1] || length($s[9]) < $rsLens[0]);
+			if($s[3] + length($s[9]) -1 >= $countPos{$s[2]}->{'min'} && $s[3] <= $countPos{$s[2]}->{'max'}){
+				$countRS{$bam_prefix}{$s[2]}{$s[1]}++;
+			}
+		}
+		close BAM;
+	}
+	
+	my @tmpBams;
+	push (@tmpBams,sort keys %countRF);
+	push (@tmpBams,sort keys %countRS);
+	
+	open ALL,">All.count";
+	print ALL "gene\t",join("\t",@tmpBams),"\n";
+	foreach $g(keys %countPos){
+		print ALL $g;
+		foreach $b(@tmpBams){
+			my ($pos,$neg);
+			if($countRF{$b}){
+				$countRF{$b}{$g}{0} //= 0;    ## positive strand
+				$countRF{$b}{$g}{16} //= 0;   ## negative strand
+				$stranBias{$b}{0}+=$countRF{$b}{$g}{0};
+				$stranBias{$b}{16}+=$countRF{$b}{$g}{16};
+				$pos = $countRF{$b}{$g}{0};
+				$neg = $countRF{$b}{$g}{16};
+			}
+			else{
+				$countRS{$b}{$g}{0} //= 0;    ## positive strand
+				$countRS{$b}{$g}{16} //= 0;   ## negative strand
+				$stranBias{$b}{0}+=$countRS{$b}{$g}{0};
+				$stranBias{$b}{16}+=$countRS{$b}{$g}{16};
+				$pos = $countRS{$b}{$g}{0};
+				$neg = $countRS{$b}{$g}{16};			
+			}
+			
+			if($strand == 0){  ## positive strand
+				print ALL "\t",$pos;
+			}
+			elsif($strand == 1){
+				print ALL "\t",$neg;
+			}
+			elsif($strand == 2){
+				print ALL "\t",$pos+$neg;
+			}
+			else{ERROR_INFOR("Check strand value!")}
+		}
+		print ALL "\n";
+	}
+	close ALL;
+	
+	my $RFnum = scalar @allRF;
+	open RF,">Riboseq.count";
+	open RS,">mRNAseq.count";
+	open IN,"All.count" || die "$!";
+	while(<IN>){
+		chomp;
+		my @ss = split;
+		my $rf = join("\t",@ss[0..$RFnum]);
+		my $rs = join("\t",@ss[0,$RFnum+1..$#ss]);
+		print RF $rf,"\n";
+		print RS $rs,"\n";
+	}
+	close IN;
+	close RF;
+	close RS;
+
+	foreach my $b(sort keys %stranBias){
+		my $log = "Mapping strandness for ".$b." - Postive: ".$stranBias{$b}{0}." Negtitve: ".$stranBias{$b}{16};
+		LOG($log);
+	}
+	
+	open CON,">condition.csv";
+	print CON "Samples,Data_Type,Conditions\n";
+	foreach(@bamsRFCnt){
+		my $name = fileparse($_,".bam");
+		print CON $name,",Ribo-Seq,Control\n";
+	}
+	foreach(@bamsRFTrt){
+		my $name = fileparse($_,".bam");
+		print CON $name,",Ribo-Seq,Treated\n";
+	}
+	foreach(@bamsRSCnt){
+		my $name = fileparse($_,".bam");
+		print CON $name,",RNA-Seq,Control\n";
+	}	
+	foreach(@bamsRSTrt){
+		my $name = fileparse($_,".bam");
+		print CON $name,",RNA-Seq,Treated\n";
+	}	
+	close CON;
+	
+	LOG("Running DESeq2");
+	DESeq2('mRNAseq.count','mRNA',scalar @bamsRSCnt,scalar @bamsRSTrt,$rdmin);
+	DESeq2('Riboseq.count','Ribo',scalar @bamsRFCnt,scalar @bamsRFTrt,$rdmin);
+
+	LOG("Running $engine");
+	if($engine eq 'ribodiff'){
+		$src //= 'utils/TE.py';
+		$disp //= 0;
+		$padj //= 'BH';
+		$plot //= '0';
+		$minP //= '0.1';
+		system("python $src -e condition.csv -c All.count -o TE.ribodiff.out -d $disp -s $rdmin -m $padj -p $plot -q $minP 2>ribodiff.log");
+	}
+	elsif($engine eq 'riborex'){
+		$tool //= 'DESeq2';
+		riborex(scalar @bamsRSCnt,scalar @bamsRSTrt,scalar @bamsRFCnt,scalar @bamsRFTrt,$tool);
+	}
+	else{ERROR_INFOR("check diff options!")}
+}
+
 
 
 sub readCDSFile{
@@ -380,10 +574,9 @@ sub RPlot{
 	my $R = Statistics::R->new( shared => 1);
 
 my $cmds = <<EOF;
-	rm(list=ls())
-	library(ggplot2)
-	library(reshape)
-	library(gridExtra)
+	suppressMessages(library(ggplot2))
+	suppressMessages(library(reshape))
+	suppressMessages(library(gridExtra))
 	
 	dframe = paste("$dir","/meta/","$file",".frame",sep="")
 	bodycov = paste("$dir","/meta/","$file",".bodyCov",sep="")
@@ -465,12 +658,73 @@ EOF
 	$R->stop;
 }
 
+sub DESeq2{
+	my ($file,$type,$ctrNum,$trtNum,$minReads) = @_;
+	my $R = Statistics::R->new( shared => 1);
+	my $stats_out = $type.'.DESeq2.out';
+	my $pca = $type.'.PCA.pdf';
+	
+my $cmds = <<EOF;
+	suppressMessages(library("DESeq2"))
+	data<-read.table("$file",header=T,row.names=1)
+	pasillaCountTable <- data[which(rowSums(data)>=$minReads),]
+
+	pasillaDesign = data.frame(
+		row.names = colnames(pasillaCountTable),
+		condition = c(rep("control",$ctrNum),rep("treated",$trtNum)),
+		libType = c(rep("SE",$ctrNum+$trtNum))
+	)
+
+	colData <- pasillaDesign[,c("condition","libType")]
+	dds <- DESeqDataSetFromMatrix(countData = pasillaCountTable,
+		colData = colData,
+		design = ~ condition
+	)
+
+	dds <- DESeq(dds)
+	res <- results(dds, contrast = c("condition", "treated","control"))
+	write.table(res,file="$stats_out",quote=F,sep="\t",row.name=T)
+
+	rld <- rlog(dds, blind = FALSE)
+
+	pdf(file="$pca", useDingbats=FALSE) 
+	plotPCA(rld, intgroup = c("condition"))
+	dev.off()
+EOF
+	$R->run($cmds);
+	$R->stop;
+}
+
+sub riborex{       
+### minimal read count cutoff is not applied here, because riborex needs same gene number in RS and RF
+	my ($RSctrNum,$RStrtNum,$RFctrNum,$RFtrtNum,$tool) = @_;
+	my $R = Statistics::R->new( shared => 1);
+	my $output = 'riborex.'.$tool.'.output';
+	
+my $cmds = <<EOF;
+	suppressMessages(library("riborex"))
+
+	RNACntTable <- read.table('mRNAseq.count',header=T,row.names=1)
+	RiboCntTable <- read.table('Riboseq.count',header=T,row.names=1)
+
+	riboCond <- c(rep("control",$RFctrNum),rep("treated",$RFtrtNum))
+	rnaCond <- c(rep("control",$RSctrNum),rep("treated",$RStrtNum))
+
+	res <- riborex(RNACntTable,RiboCntTable,rnaCond,riboCond,"$tool")
+	write.table(res,file="$output",quote=F,sep="\t",row.name=T)
+EOF
+
+	$R->run($cmds);
+	$R->stop;
+}
+
+
 __DATA__
 
 Useage:
 	perl Riboseq_tools.pl [task] [options]
 
-Task: map meta plot
+Task: map meta plot diff
 
 External tools required: bowtie2 sambamba 
 
@@ -509,4 +763,32 @@ Figures are generated automatically.
 Plot data generated by meta command, one bam file one graph (.pdf)
 
 	-bam      bam files used in meta command, separated by comma, eg: bam1,bam2 [required]
+
+** diff **
+Calculate differential expression/translation using DESeq2 (for mRNA/RFP) or Ribodiff (for TE)
+TE can also be calculated using Riborex, which is faster but cannot be applied when the number
+of samples are different for mRNA and RFP.
+
+	-cds      cds sequence file generated by 'map' command [required]
+	-rfLen    reads within this range to count for Riboseq, default: 27-30
+	-rsLen    reads within this range to count for mRNAseq, default: 27-30
+	-strand   mappng strand to count: +: 0; -: 1; both: 2. Default: 2
+	-engine	  tool to be used for differential TE analysis, ribodiff or riborex. Default: ribodiff
+	-bamRFCnt bam files of riboseq used as control, separated by comma. [required]
+	-bamRFTrt bam files of riboseq used as treatmeat. [required]
+	-bamRSCnt bam files of mRNAseq used as control. [required]
+	-bamRSTrt bam files of mRNAseq used as treatmeat. [required]
+	-rdmin	  minimal sum of normalized reads for the test. default: 10
+
+options for ribodiff
 	
+	-src	  location for ribodiff script (TE.py), defualt: utils/TE.py
+	-disp	  dispersion for riboseq or mRNAseq. 1: different dispersion; 0: same dispersion. default: 0
+	-padj	  method for multiple test correction, BH, Bonferroni. Default: BH
+	-plot 	  make plots to show the data and results. On: 1; Off: 0. Defulat: 0
+	-minP     FDR cutoff for plot. Default: 0.1
+
+options for riborex
+		
+	-tool	  tools for estimation, options: DESeq2, edgeR, edgeRD, Voom. Default: DESeq2.
+

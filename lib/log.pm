@@ -1,4 +1,4 @@
-package SXP::Util;
+package log;
 use strict;
 use warnings;
 use Term::ANSIColor;
