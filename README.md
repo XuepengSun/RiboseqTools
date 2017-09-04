@@ -1,11 +1,17 @@
 # RiboseqTools
  Tools for ribosome profiling data analysis and plot.
+ 
+ ###**Prerequisite**
+ ..* bowti2 (http://bowtie-bio.sourceforge.net/bowtie2/index.shtml)
+ ..* sambamba (http://lomereiter.github.io/sambamba/)
+ ..* perl modules
+ ....* BioPerl
 
-Useage:
+**Useage:**
 
 	perl Riboseq_tools.pl [task] [options]
 
-Task: map meta plot
+**Task: map meta plot diff**
 
 External tools required: bowtie2 sambamba 
 
