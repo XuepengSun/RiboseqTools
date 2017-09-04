@@ -1,7 +1,8 @@
 # RiboseqTools
  Tools for ribosome profiling data analysis and plot.
 
-Useage:.
+Useage:
+
 	perl Riboseq_tools.pl [task] [options]
 
 Task: map meta plot
